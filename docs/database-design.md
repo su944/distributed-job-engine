@@ -91,7 +91,20 @@ SELECT sees that committed winner under a fresh statement snapshot. There is no
 check-then-insert race and no no-op UPDATE of an existing job. Matching hashes
 return the original current status without another event; conflicts return 409.
 Commit errors conservatively return `submission_outcome_unknown`; callers retry
-the same key. No automatic transaction replay is performed in M1.
+the same key. No automatic transaction replay is performed in M1 or M2.
+
+M2 verifies the uncertain-commit contract against real PostgreSQL: a test-only
+protocol wrapper either prevents sending COMMIT or consumes the server's COMMIT
+success before reporting EOF to pgx. The same key then creates the missing job or
+retrieves the already committed job. In both cases exactly one job/outbox pair
+remains, and the pool replaces its broken connection. No production fault hooks
+or extra transaction abstraction are introduced.
+
+SQLSTATE assertions cover payload/hash/attempt/state checks and outbox foreign
+keys. Representative `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` lookups over 1,000
+synthetic rows use `jobs_namespace_key_unique` for submission-key reads and
+`jobs_pkey` for status reads. No new indexes or migration edits are warranted by
+these query shapes; these small tests are not a production capacity benchmark.
 
 The explicit migration command embeds reviewed SQL, takes a transaction-scoped
 advisory lock, and records a checksum in `schema_migrations`. Re-running is safe;

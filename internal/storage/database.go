@@ -31,8 +31,10 @@ func Open(ctx context.Context, c config.Config) (*sql.DB, error) {
 	return db, nil
 }
 
-// Ready verifies connectivity and the installed schema version without changing it.
+// Ready checks the migration ledger and submission tables without scanning job data.
 func Ready(ctx context.Context, db *sql.DB) error {
 	var version int
-	return db.QueryRowContext(ctx, `SELECT version FROM schema_migrations WHERE version=1`).Scan(&version)
+	return db.QueryRowContext(ctx, `SELECT version FROM schema_migrations WHERE version=1
+        AND NOT EXISTS (SELECT id FROM jobs WHERE false)
+        AND NOT EXISTS (SELECT id FROM outbox_events WHERE false)`).Scan(&version)
 }

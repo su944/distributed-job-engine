@@ -1,6 +1,8 @@
 # Failure scenarios and verification obligations
 
-These are proposed behavior and future tests, not completed verification. Each
+Worker/dispatch scenarios remain proposed behavior and future tests. M1/M2
+submission checks have executed coverage recorded in the milestone verification
+documents. Each
 critical transition requires real PostgreSQL concurrency coverage. See
 [transaction boundaries](database-design.md) for authoritative guards.
 
@@ -13,6 +15,19 @@ critical transition requires real PostgreSQL concurrency coverage. See
 - **Commit response lost:** return an unknown-submission error if possible;
   lookup/retry using the same key. Never compensate by deleting the job.
 - **Key conflict:** a different canonical request returns 409 without a new event.
+
+M2 tests the submission ambiguity using real PostgreSQL protocol I/O: suppress
+COMMIT before sending, or hide the server's successful reply. Both return 503
+`submission_outcome_unknown`; retrying the original key leaves one job/event pair.
+This does not simulate operating-system process death, server failover, or power
+loss. Existing outbox-write failure coverage separately proves atomic rollback.
+
+M2 also observes an actual unique-key lock wait before canceling its request,
+verifying cancellation returns promptly without a waiter job/event. Exhausting
+a one-connection pool produces `request_timeout`; releasing the held connection
+allows a new submission and repeated replays/conflicts without a transaction leak.
+Cancellation before/during SQL is not evidence that an already-started COMMIT
+failed; the uncertain-commit error classification always takes precedence.
 
 ## Debezium or Kafka outage
 

@@ -156,6 +156,8 @@ func (a *API) submit(w http.ResponseWriter, r *http.Request) {
 		var max *http.MaxBytesError
 		if errors.As(err, &max) {
 			fail(w, http.StatusRequestEntityTooLarge, "request_too_large")
+		} else if code, ok := contextErrorCode(err); ok {
+			fail(w, http.StatusServiceUnavailable, code)
 		} else {
 			fail(w, http.StatusBadRequest, "invalid_request")
 		}
@@ -187,8 +189,21 @@ func (a *API) storageError(w http.ResponseWriter, operation string, err error) {
 	code := "database_unavailable"
 	if errors.Is(err, jobs.ErrSubmissionUnknown) {
 		code = "submission_outcome_unknown"
+	} else if contextCode, ok := contextErrorCode(err); ok {
+		code = contextCode
 	}
 	// Driver errors can contain SQL parameters and connection secrets; never log them.
 	a.log.Error("storage operation failed", "operation", operation, "code", code)
 	fail(w, http.StatusServiceUnavailable, code)
+}
+
+func contextErrorCode(err error) (string, bool) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "request_timeout", true
+	case errors.Is(err, context.Canceled):
+		return "request_canceled", true
+	default:
+		return "", false
+	}
 }
