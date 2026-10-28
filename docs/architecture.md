@@ -1,7 +1,8 @@
 # Architecture proposal — Phase 0
 
-Status: proposed; architecture review required before Milestone 1. This document
-specifies intended behavior, not implemented functionality. See the
+Status: target design with the submission slice implemented in Milestone 1
+under the user's explicit revised scope ([issue #3](https://github.com/su944/distributed-job-engine/issues/3)).
+Workers, dispatch, and recovery remain proposals. See the
 [diagrams](architecture-diagram.md), [database design](database-design.md),
 [failure analysis](failure-scenarios.md), and [plan](implementation-plan.md).
 
@@ -42,7 +43,21 @@ completed. Kafka records are replaceable wake-ups; they confer no ownership.
 
 Proposed Go layout: `cmd/api`, `cmd/worker`, `cmd/scheduler`; implementation in
 `internal/` packages for jobs, storage, dispatch, handlers, and telemetry. These
-directories are not created in Phase 0.
+worker and scheduler directories remain deferred.
+
+### Milestone 1 scope adjustment
+
+The original plan deferred persistence/API to M2 and infrastructure to M3. The
+user explicitly requested them in M1, together with HTTP health, timeouts, and
+shutdown. Only PostgreSQL Compose is introduced: real concurrency tests require
+it. The implementation retains atomic job/outbox submission without adding CDC
+or publishing. Jobs remain READY indefinitely until later dispatch milestones.
+
+Configured `JOB_TYPES` names are an admission allow-list, not installed handlers;
+all jobs default to `replay_safe=false`. Authentication remains an ingress
+responsibility; the API and PostgreSQL bind to loopback for development. The
+single configured namespace is trusted server configuration, never a client header.
+Future attempt/audit tables and scheduler indexes are deferred until needed.
 
 ## Dispatch and bounded execution
 
@@ -85,7 +100,8 @@ is proposed in v1. Terminal jobs are immutable.
 
 ## Proposed REST contract
 
-All examples are illustrative, not runnable today. UUIDs below are example IDs.
+Submission and status endpoints now run locally; UUIDs below are example IDs.
+The SUCCEEDED example illustrates future execution: M1 only creates READY jobs.
 
 ```http
 POST /v1/jobs HTTP/1.1
@@ -123,8 +139,20 @@ Content-Type: application/json
 ```
 
 Unknown ID returns `404`. Poll responses expose safe error codes and next due
-time, not raw payloads, secrets, tokens, or provider errors. Example trajectory:
+time when execution is implemented, not raw payloads, secrets, tokens, or provider errors. Example trajectory:
 `READY -> RUNNING (attempt 1) -> RETRY_WAIT -> READY -> RUNNING (attempt 2) -> SUCCEEDED`.
+
+M1 makes the limit concrete as 256 KiB for the entire request body. Payload must
+be a JSON object; unknown fields, duplicate keys at any depth, invalid UTF-8,
+NUL characters, nesting beyond 64, numeric strings longer than 1024 bytes, and exponents outside
+[-1000,1000] are rejected. Object key ordering, whitespace, equivalent decimal
+payload numbers, and omitted/default max_attempts are canonicalized without
+float64 rounding. `max_attempts` itself must be an integer token between 1 and 20.
+Submission keys are 1–128 printable ASCII bytes excluding spaces and are opaque.
+Content-Type must be application/json (415 otherwise). Malformed IDs return 400,
+unknown routes 404, unsupported methods 405, and all handled responses are JSON.
+Readiness checks the migration ledger through PostgreSQL; liveness is independent
+of it. Admission caps active job requests at 64; excess requests receive 429.
 
 ## Decisions and alternatives
 

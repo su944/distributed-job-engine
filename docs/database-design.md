@@ -1,6 +1,8 @@
 # Proposed database design
 
-Design only: no executable migration is supplied. PostgreSQL is authoritative;
+Milestone 1 implements `jobs` and `outbox_events` in migration 001 using pgx/v5
+through `database/sql`. Attempts, reconciliation audit, and scheduler indexes
+remain proposed until their owning milestones. PostgreSQL is authoritative;
 Kafka contains notifications, not the job ledger. All timestamps are `timestamptz`
 in UTC. Use UUID application-generated IDs and explicit checks rather than a
 database enum to ease later lifecycle evolution.
@@ -82,6 +84,22 @@ unexported rows just because they are old. If connector state is lost, resnapsho
 retained rows and republish current READY jobs; duplicates are expected.
 
 ## Transaction boundaries and fencing
+
+Implemented submission uses an explicit READ COMMITTED transaction and a SQL
+unique constraint. `ON CONFLICT DO NOTHING` waits for the winner; a separate
+SELECT sees that committed winner under a fresh statement snapshot. There is no
+check-then-insert race and no no-op UPDATE of an existing job. Matching hashes
+return the original current status without another event; conflicts return 409.
+Commit errors conservatively return `submission_outcome_unknown`; callers retry
+the same key. No automatic transaction replay is performed in M1.
+
+The explicit migration command embeds reviewed SQL, takes a transaction-scoped
+advisory lock, and records a checksum in `schema_migrations`. Re-running is safe;
+editing applied SQL fails the checksum check. The API does not migrate on startup.
+The down SQL is destructive and manual-only; no production rollback command is
+provided. No job or outbox cleanup is implemented, preserving idempotency keys.
+
+The remaining ownership transitions below are target behavior, not M1 code.
 
 Use short READ COMMITTED transactions, lock jobs before attempt rows, and retry
 bounded deadlock/serialization errors. Evaluate database time after acquiring the
