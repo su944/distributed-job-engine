@@ -5,6 +5,9 @@ Milestone 1 implements durable submission and status reads, tracked in
 [issue #3](https://github.com/su944/distributed-job-engine/issues/3).
 Milestone 2 hardens this ledger/API in
 [issue #5](https://github.com/su944/distributed-job-engine/issues/5).
+Its implementation merged in [PR #6](https://github.com/su944/distributed-job-engine/pull/6).
+The subsequent [main-branch acceptance revalidation](docs/milestone-2-main-revalidation.md)
+is tracked in [issue #7](https://github.com/su944/distributed-job-engine/issues/7).
 Accepted jobs remain `READY`; no workers, Kafka, Debezium, Redis, or Kubernetes
 are implemented.
 
@@ -169,6 +172,7 @@ are deferred. See:
 - [Go design choices compared with Spring Boot](docs/go-design-choices.md)
 - [Executed Milestone 1 verification](docs/milestone-1-verification.md)
 - [Milestone 2 review and verification](docs/milestone-2-verification.md)
+- [Merged-main Milestone 2 revalidation](docs/milestone-2-main-revalidation.md)
 - [Contributor instructions](AGENTS.md)
 
 Use issue-linked feature branches and run relevant checks. A linked PR follows

@@ -61,6 +61,12 @@ Do not start M2 or push/merge without approval.
 
 ## Milestone 2 — ledger and API hardening review
 
+Implementation status: [PR #6](https://github.com/su944/distributed-job-engine/pull/6)
+is merged. [Issue #7](https://github.com/su944/distributed-job-engine/issues/7)
+records the subsequent [acceptance revalidation of merged main](milestone-2-main-revalidation.md).
+Repeat review requests should verify the merged implementation rather than
+reimplement it. Milestone 3 still requires explicit approval.
+
 Current user-authorized work: [issue #5](https://github.com/su944/distributed-job-engine/issues/5),
 based on merged M1 PR #4. Issues #1 and #3 remain open for acceptance tracking;
 starting M2 does not close unresolved architecture or production-readiness reviews.
