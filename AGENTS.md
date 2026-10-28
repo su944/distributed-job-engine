@@ -12,9 +12,9 @@ PostgreSQL, Kafka, and Debezium.
 - Never hold database transactions during job execution.
 
 ## Project Structure
-Milestone 1 is the user-authorized submission API, PostgreSQL persistence, and
-local PostgreSQL Compose setup (issue #3). No workers, Kafka, Debezium, Redis,
-or Kubernetes yet. Stop for review before starting subsequent milestones.
+Milestone 2 hardens the merged submission API and PostgreSQL ledger (issue #5).
+Keep fixes focused and preserve hash/migration compatibility. No workers, Kafka,
+Debezium, Redis, or Kubernetes yet. Stop for review before Milestone 3.
 Read `docs/architecture.md`, `docs/database-design.md`, and
 `docs/implementation-plan.md` before coding. Record milestone approvals.
 Keep implementation under `internal/` and tests in `*_test.go` files beside code.
@@ -41,7 +41,7 @@ see README for required environment settings. The API never runs migrations.
 Use Go's `testing` package and `TestXxx` function names. Test every critical state
 transition, duplicate delivery, retries, leases, and fencing. Use real PostgreSQL
 for concurrency integration tests. Document required services and configuration.
-Run `go test -tags=integration ./internal/storage/... -count=1` with
+Run `go test -tags=integration ./internal/storage/... ./internal/api/... -count=1` with
 `TEST_DATABASE_URL` targeting real PostgreSQL. Tests create isolated schemas and
 fail if infrastructure is absent. Never claim a test passed unless executed.
 

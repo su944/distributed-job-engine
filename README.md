@@ -3,6 +3,8 @@
 A Go distributed job engine with PostgreSQL as the authoritative job ledger.
 Milestone 1 implements durable submission and status reads, tracked in
 [issue #3](https://github.com/su944/distributed-job-engine/issues/3).
+Milestone 2 hardens this ledger/API in
+[issue #5](https://github.com/su944/distributed-job-engine/issues/5).
 Accepted jobs remain `READY`; no workers, Kafka, Debezium, Redis, or Kubernetes
 are implemented.
 
@@ -63,7 +65,8 @@ curl -i http://127.0.0.1:8080/v1/jobs/REPLACE_WITH_RETURNED_UUID
 Responses contain `id`, `status`, `attempts`, `max_attempts`, `created_at`, and
 `updated_at`, excluding payload, key, hash, and lease details. Unknown UUIDs
 return 404; malformed IDs return 400. Liveness is independent of PostgreSQL;
-readiness queries its migration ledger and returns 503 when DB/schema is absent
+readiness checks its migration ledger and both submission tables without scanning
+job data, and returns 503 when DB/schema is absent
 or the service is draining.
 
 Inputs require application/json, one object, an allowed type, object payload,
@@ -79,6 +82,9 @@ Handled errors use `{"error":{"code":"..."}}`: 413 body limit, 415 media type,
 503 for database/deadline/shutdown failures. After `submission_outcome_unknown`,
 retry with the **same key** because the transaction may already have committed.
 Use that same key after any submission timeout or lost connection as well.
+Cancellation and deadline errors use `request_canceled` and `request_timeout`
+respectively, including body reads. Uncertain COMMIT outcomes retain
+`submission_outcome_unknown` even when the underlying error is cancellation.
 SIGINT/SIGTERM stops admission and drains active HTTP requests; at the shutdown
 deadline remaining contexts are canceled and connections closed.
 
@@ -107,14 +113,14 @@ authentication/TLS, and production least-privilege roles require further review.
 ## Verification
 
 ```sh
-gofmt -w cmd internal migrations
+gofmt -l .
 go build ./...
 go vet ./...
 go test ./...
 go test -race ./...
 export TEST_DATABASE_URL="$DATABASE_URL"
-go test -tags=integration ./internal/storage/... -count=1
-go test -race -tags=integration ./internal/storage/... -count=1
+go test -tags=integration ./internal/storage/... ./internal/api/... -count=1
+go test -race -tags=integration ./internal/storage/... ./internal/api/... -count=1
 git diff --check
 ```
 
@@ -126,6 +132,16 @@ outbox rollback, SQL constraints, canceled I/O, migration replay/drift, and HTTP
 against real SQL. Unit/httptest covers input, config, JSON responses, health,
 backpressure, and safe logs. Lifecycle tests bind localhost sockets and exercise
 request deadlines plus graceful and forced shutdown.
+
+M2 adds concurrent HTTP races between equivalent and conflicting logical requests,
+frozen persisted-hash vectors, observed PostgreSQL lock-wait cancellation, pool
+exhaustion/recovery, SQLSTATE constraint assertions, and representative lookup
+plans. A test-only protocol transport drops COMMIT before transmission or hides
+the real server's successful COMMIT reply. Both cases must return an uncertain
+submission and resolve via the original key to exactly one durable job/event pair.
+This is local PostgreSQL transport fault injection, not a production failover test.
+The existing hash algorithm, submission transaction, migrations, indexes, and
+pool implementation are unchanged. Future scheduling indexes remain deferred.
 
 ## Structure and architectural decisions
 
@@ -152,6 +168,7 @@ are deferred. See:
 - [Revised implementation plan](docs/implementation-plan.md)
 - [Go design choices compared with Spring Boot](docs/go-design-choices.md)
 - [Executed Milestone 1 verification](docs/milestone-1-verification.md)
+- [Milestone 2 review and verification](docs/milestone-2-verification.md)
 - [Contributor instructions](AGENTS.md)
 
 Use issue-linked feature branches and run relevant checks. A linked PR follows

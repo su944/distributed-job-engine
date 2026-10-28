@@ -61,6 +61,9 @@ Do not start M2 or push/merge without approval.
 
 ## Milestone 2 — ledger and API hardening review
 
+Current user-authorized work: [issue #5](https://github.com/su944/distributed-job-engine/issues/5),
+based on merged M1 PR #4. Issues #1 and #3 remain open for acceptance tracking;
+starting M2 does not close unresolved architecture or production-readiness reviews.
 Dependencies: M1 accepted; approve database access/migration tooling, driver,
 authentication boundary, retention assumptions, and real PostgreSQL test setup.
 Scope: review and harden the M1 ledger/API; add attempts/audit only as required
@@ -69,7 +72,12 @@ already moved into M1 and must not be implemented a second time.
 Acceptance: API examples match behavior; concurrent same-key requests create one
 job; conflicting bodies return 409; rollback creates neither job nor event;
 commit ambiguity resolves with the original key; checks/indexes enforce schema.
+Also verify context-aware error mapping, bounded pool/SQL waits, hash compatibility,
+and readiness when submission tables are absent. Keep existing migration 001,
+indexes, and transaction implementation unless a demonstrated defect requires change.
 Verification: baseline; `go test -tags=integration ./internal/storage/... ./internal/api/... -count=1`.
+See [M2 review and executed checks](milestone-2-verification.md) for actual results
+and each regression test's reliability guarantee.
 Review gate: inspect migrations and real query plans, uniqueness races, and
 transaction boundaries before CDC configuration.
 

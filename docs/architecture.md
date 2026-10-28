@@ -151,8 +151,23 @@ float64 rounding. `max_attempts` itself must be an integer token between 1 and 2
 Submission keys are 1–128 printable ASCII bytes excluding spaces and are opaque.
 Content-Type must be application/json (415 otherwise). Malformed IDs return 400,
 unknown routes 404, unsupported methods 405, and all handled responses are JSON.
-Readiness checks the migration ledger through PostgreSQL; liveness is independent
+Readiness checks the migration ledger and both submission tables through PostgreSQL
+without scanning their rows; liveness is independent
 of it. Admission caps active job requests at 64; excess requests receive 429.
+
+### Milestone 2 reliability hardening
+
+The user authorized a review of merged M1 PR #4 and focused fixes in
+[issue #5](https://github.com/su944/distributed-job-engine/issues/5), not new
+execution components. M2 preserves the submission transaction, SHA-256 canonical
+format, default policy, SQL migrations, indexes, and single database/sql pool.
+Golden hash vectors guard compatibility with persisted requests across upgrades.
+
+Context cancellation and deadlines map to 503 `request_canceled` and
+`request_timeout`, including body reads; uncertain COMMIT classification takes
+precedence. A disconnected client may not receive a response at all and must
+retry the original key. Readiness detects missing submission relations but is
+not a full catalog/constraint drift audit. No additional infrastructure is added.
 
 ## Decisions and alternatives
 
