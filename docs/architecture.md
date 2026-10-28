@@ -1,0 +1,176 @@
+# Architecture proposal — Phase 0
+
+Status: proposed; architecture review required before Milestone 1. This document
+specifies intended behavior, not implemented functionality. See the
+[diagrams](architecture-diagram.md), [database design](database-design.md),
+[failure analysis](failure-scenarios.md), and [plan](implementation-plan.md).
+
+## Scope and guarantees
+
+Accept durable jobs, dispatch eligible jobs, run bounded handlers, recover lost
+owners, and expose durable status. Execution is at least once. Under available
+dependencies, finite outages, and runnable handlers, eligible jobs eventually
+progress. Ordering across jobs is not guaranteed. No workflow DAGs, cron,
+priorities, cancellation, arbitrary user code, or multi-region ownership in v1.
+
+PostgreSQL is the authority for job state, attempt budgets, due times, and
+ownership. An accepted response means submission committed, not execution
+completed. Kafka records are replaceable wake-ups; they confer no ownership.
+
+## Components and responsibilities
+
+- **REST API:** validate registered job types, payload size, retry policy, and
+  idempotency key; commit job plus initial outbox event atomically; read status.
+  Never publish directly to Kafka. Proposed deployment assumes a single trusted
+  namespace behind authenticated ingress; public/multi-tenant use requires review.
+- **PostgreSQL:** persist jobs, attempts, and append-only outbox inserts. Serialize
+  per-job transitions through short row-locking transactions. Use database time.
+- **Debezium on Kafka Connect:** capture committed outbox inserts from logical
+  replication; route `JobReady` envelopes to Kafka. Snapshots and connector
+  recovery may repeat events. No application-level publisher competes with CDC.
+- **Kafka:** retain wake-ups in `jobs.ready.v1`, keyed by job UUID, with a shared
+  worker consumer group. Partition order aids dispatch but is not correctness.
+- **Worker:** reserve capacity, conditionally claim in PostgreSQL, then execute
+  outside transactions. Heartbeat the lease, enforce handler timeout, and commit
+  the result only with the current unexpired fencing token.
+- **Recovery scheduler:** bounded database scans promote due retries, recover
+  expired leases, and republish overdue READY jobs. Multiple schedulers use
+  `FOR UPDATE SKIP LOCKED`; no singleton leader is required.
+- **Handlers/external services:** accept stable per-job side-effect keys; report
+  success, permanent failure, retryable failure, or unknown outcome. Provider
+  reconciliation is part of each handler's contract.
+
+Proposed Go layout: `cmd/api`, `cmd/worker`, `cmd/scheduler`; implementation in
+`internal/` packages for jobs, storage, dispatch, handlers, and telemetry. These
+directories are not created in Phase 0.
+
+## Dispatch and bounded execution
+
+Reserve one of N worker slots before claiming. Pause assigned partitions when
+slots are full, continue required consumer polling, and bound fetch buffers.
+After a claim commits, a record is handled for dispatch purposes; commit only the
+highest contiguous handled offset per partition. A DB-confirmed stale/noneligible
+event is also handled. DB errors leave offsets uncommitted. A crashed claimed
+job is recovered from its lease even if its Kafka offset was committed.
+
+Rebalances stop intake from revoked partitions; already claimed jobs remain
+owned through PostgreSQL leases and may finish. Offset commits must respect the
+current consumer generation. Malformed records require durable quarantine before
+offset advancement; quarantine failure pauses that partition and raises an alert.
+The quarantine mechanism and chosen Go client's polling behavior require review.
+
+Initial proposed limits: N=16 executions per worker, maximum 64 buffered events,
+30-second leases, heartbeat every 10 seconds, 5-minute handler timeout, 20-second
+shutdown drain. These are tunable proposals, not throughput promises. Heartbeats
+cannot extend beyond the attempt deadline. Use separate bounded heartbeat/DB
+capacity so saturated handlers cannot starve renewals.
+
+## Lifecycle and retries
+
+States: `READY`, `RUNNING`, `RETRY_WAIT`, `SUCCEEDED`, `FAILED`, `RECONCILE`.
+Submission creates READY. Claim increments attempt count and token. Successful
+completion is terminal. A known permanent error or exhausted budget becomes
+FAILED. Retryable failure schedules RETRY_WAIT; the scheduler promotes it to
+READY with a new outbox event. Expired ownership uses the same policy, but an
+unresolved external outcome enters RECONCILE unless the handler is explicitly
+safe to replay. Unknown handler categories default to reconciliation.
+
+Use capped exponential full jitter: random delay from zero to
+`min(5 minutes, 1 second * 2^(attempt-1))`, with overflow-safe arithmetic and a
+bounded attempt budget (default 5, maximum 20). Retry-After may raise the delay
+within an approved maximum. RECONCILE consumes no automatic execution attempts.
+Operator reconciliation records evidence and either proves success, proves
+failure, or authorizes RETRY_WAIT with budget remaining; no public retry endpoint
+is proposed in v1. Terminal jobs are immutable.
+
+## Proposed REST contract
+
+All examples are illustrative, not runnable today. UUIDs below are example IDs.
+
+```http
+POST /v1/jobs HTTP/1.1
+Content-Type: application/json
+Idempotency-Key: invoice-2026-10-28-001
+
+{"type":"invoice.send","payload":{"invoice_id":"inv_001"},"max_attempts":5}
+```
+
+```http
+HTTP/1.1 202 Accepted
+Location: /v1/jobs/0b4027ce-0686-4191-8e77-d3bc5a9d944d
+Content-Type: application/json
+
+{"id":"0b4027ce-0686-4191-8e77-d3bc5a9d944d","status":"READY","attempts":0}
+```
+
+Same key and canonical request returns `200 OK` with the original job's current
+representation and Location. Same key with different type, payload, or retry
+policy returns `409 Conflict` with `{"error":{"code":"idempotency_conflict"}}`.
+Missing key, invalid JSON/type, or policy returns `400`; payload over proposed
+256 KiB limit returns `413`; bounded admission rejection returns `429` with
+Retry-After; unavailable DB returns `503`. An ambiguous commit returns `503` with
+`submission_outcome_unknown`; clients retry the same key, never a fresh key.
+
+```http
+GET /v1/jobs/0b4027ce-0686-4191-8e77-d3bc5a9d944d HTTP/1.1
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"id":"0b4027ce-0686-4191-8e77-d3bc5a9d944d","status":"SUCCEEDED","attempts":2,"max_attempts":5,"created_at":"2026-10-28T10:00:00Z","updated_at":"2026-10-28T10:00:15Z","result":{"receipt_id":"r_001"}}
+```
+
+Unknown ID returns `404`. Poll responses expose safe error codes and next due
+time, not raw payloads, secrets, tokens, or provider errors. Example trajectory:
+`READY -> RUNNING (attempt 1) -> RETRY_WAIT -> READY -> RUNNING (attempt 2) -> SUCCEEDED`.
+
+## Decisions and alternatives
+
+1. **CDC over normal database polling:** transactional outbox closes the dual
+   write gap and CDC offers low-latency dispatch without continuous hot-table
+   polling. Polling is simpler operationally and remains a valid alternative for
+   low volume; CDC adds Connect, replication-slot, and Kafka operations. The
+   recovery scheduler polls bounded exceptional/due work, not a second executor.
+2. **PostgreSQL ownership:** atomic row updates coordinate Kafka replays, multiple
+   workers, schedulers, and API reads. Kafka partition assignment alone cannot
+   fence a paused worker or atomically update job history.
+3. **Kafka delivery versus completion:** offsets acknowledge dispatch handling.
+   Durable completion requires a fenced database transition. Kafka transactions
+   cannot atomically commit arbitrary external HTTP side effects.
+4. **Scheduler retained:** delayed retries and expired owners exist independently
+   of event delivery. READY republishing repairs lost notifications and connector
+   rebuild gaps; it does not bypass a broken Kafka path by running handlers.
+5. **At least once:** stable side-effect keys and provider reconciliation mitigate
+   duplicates. Exactly-once external outcomes cannot be promised without provider
+   cooperation. A database fence prevents stale DB writes, not an HTTP call.
+6. **Bounded concurrency:** fixed slots, bounded buffers, bounded scans, retry
+   jitter, and admission controls protect dependencies. Unlimited goroutines and
+   immediate requeueing would amplify outages.
+
+## Operations, security, and open decisions
+
+Emit structured `slog` logs with job/event/attempt IDs; no payloads or secrets.
+Measure READY age, retry backlog, expired leases, claim conflicts, execution
+latency, active slots, Kafka lag, CDC lag, WAL bytes retained, reconciliation
+backlog, and quarantine count. Trace submission through event IDs and attempts;
+avoid job IDs as metric labels. Distinguish liveness from dependency readiness.
+
+Use least-privilege API, worker, scheduler, and replication identities; TLS and
+secret injection. Backup/restore, connector offset/slot recovery, outbox pruning,
+and coordinated restore/replay need tested runbooks before production.
+
+Review must settle: supported versions and Go Kafka client; authentication and
+namespace model; handler side-effect contracts; quarantine storage; retention
+and idempotency lifetime; SLO/load envelope; lease/timeout tuning; payload/result
+limits; and whether deployment targets require stronger PostgreSQL durability
+than primary-local synchronous commits. No capacity or cross-region SLA is yet
+claimed.
+
+## Primary references
+
+- [PostgreSQL locking clauses](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE): basis for bounded queue-like scans with SKIP LOCKED.
+- [PostgreSQL replication slots](https://www.postgresql.org/docs/17/warm-standby.html#STREAMING-REPLICATION-SLOTS): retained WAL requires monitoring and limits.
+- [Debezium outbox event router](https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html): event IDs and aggregate keys support this proposed envelope.
+- [Kafka delivery semantics](https://kafka.apache.org/design/): Kafka delivery guarantees do not encompass arbitrary external side effects.
