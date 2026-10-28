@@ -1,8 +1,11 @@
 # Implementation plan and review gates
 
-Phase 0 is documentation only and precedes the seven implementation milestones
-below. No application code, migration, worker, or infrastructure is authorized
-by this plan. Milestone 1 starts only after explicit architecture approval.
+Phase 0 was documentation only. The user's subsequent explicit implementation
+request authorizes the revised Milestone 1 below, tracked in
+[issue #3](https://github.com/su944/distributed-job-engine/issues/3). It moves the
+submission API/persistence from M2, PostgreSQL-only Compose from M3, and basic
+HTTP health/shutdown from M6 into M1. Other architecture questions and all later
+milestone gates remain open; this is not blanket release or architecture approval.
 
 ## Common workflow and verification
 
@@ -24,13 +27,13 @@ git diff --check
 ```
 
 Require empty formatting output and successful command exits. Integration checks
-below are proposed test contracts to be created in their milestone, not commands
-that currently work. They must run with real PostgreSQL and later real Kafka and
+below work for M1; later suites are proposed contracts to create in their milestone.
+They must run with real PostgreSQL and later real Kafka and
 Debezium; no silently skipped dependency tests count as acceptance. Configure
 `TEST_DATABASE_URL` externally without committing credentials. The exact service
-startup command must be documented when infrastructure is approved in M3.
+startup command is now documented in README for PostgreSQL; Kafka/CDC remain M3.
 
-## Phase 0 — architecture review (current)
+## Phase 0 — target architecture review
 
 Deliverables: architecture, seven Mermaid diagrams, database proposal, failure
 analysis, REST examples, and this plan. Verify Markdown links, lifecycle agreement,
@@ -39,23 +42,30 @@ approved renderer. Resolve safety-critical questions before implementation.
 Gate: architecture reviewer approves scope, retry/reconciliation semantics,
 ownership, provider contract, and staged infrastructure justification.
 
-## Milestone 1 — Go foundation and domain contracts
+## Milestone 1 — Go foundation and durable submission API (revised scope)
 
-Dependencies: Phase 0 approval and linked issue.
-Scope: Go module, domain types, validated policy/configuration, handler interfaces,
-bounded context/deadline contracts, and structured logging. No API, migrations,
-Kafka deployment, or worker execution yet.
-Acceptance: lifecycle transitions, error classifications, request canonicalization,
-overflow-safe jitter, and budgets are unit tested; no unbounded concurrency.
-Verification: baseline plus `go test ./internal/jobs/... -count=1`.
-Review gate: approve package boundaries, handler replay-safety contract, and config
-limits before M2.
+Dependencies: explicit user authorization for this bounded scope and issue #3.
+Scope: Go module, configuration, pgx/v5 via database/sql, jobs/outbox migrations,
+domain and repository interface, validated idempotent POST/GET, health, slog,
+HTTP deadlines/shutdown, PostgreSQL Compose, unit/httptest/real DB tests, README.
+Acceptance: concurrent identical logical submissions create one job/event;
+different requests sharing a key return 409; SQL enforces uniqueness; rollback
+cannot leave a job without its event; health reflects DB/schema availability;
+requests/DB pools are bounded and graceful shutdown drains within its deadline.
+Verification: baseline plus `go test -tags=integration ./internal/storage/... -count=1`
+and the same integration suite with `-race`; record actual results.
+Deferred: handler execution/interfaces, retry jitter/ownership transitions, and
+all Kafka/CDC/worker infrastructure. No automatic job processing in M1.
+Review gate: review API, schema, DI, canonicalization, tests, and scope changes.
+Do not start M2 or push/merge without approval.
 
-## Milestone 2 — PostgreSQL ledger and atomic submission API
+## Milestone 2 — ledger and API hardening review
 
 Dependencies: M1 accepted; approve database access/migration tooling, driver,
 authentication boundary, retention assumptions, and real PostgreSQL test setup.
-Scope: migrations for jobs/attempts/outbox/audit, repositories, POST/GET endpoints.
+Scope: review and harden the M1 ledger/API; add attempts/audit only as required
+by approved subsequent execution work. Jobs/outbox migrations and POST/GET have
+already moved into M1 and must not be implemented a second time.
 Acceptance: API examples match behavior; concurrent same-key requests create one
 job; conflicting bodies return 409; rollback creates neither job nor event;
 commit ambiguity resolves with the original key; checks/indexes enforce schema.
@@ -67,7 +77,8 @@ transaction boundaries before CDC configuration.
 
 Dependencies: M2 accepted; approve justified local PostgreSQL/Kafka/Connect/
 Debezium configuration, supported versions, topic policy, Go client, quarantine,
-and offset management. Infrastructure first becomes in scope here.
+and offset management. Kafka/CDC infrastructure first becomes in scope here;
+PostgreSQL-only Compose is already included in M1.
 Acceptance: committed outbox records reach `jobs.ready.v1` keyed by job ID;
 rollback does not publish; connector restart/replay is tolerated; malformed events
 are durably quarantined before acknowledgement; backlogs and WAL lag observable.

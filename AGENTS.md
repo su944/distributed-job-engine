@@ -12,21 +12,19 @@ PostgreSQL, Kafka, and Debezium.
 - Never hold database transactions during job execution.
 
 ## Project Structure
-The repository is in Phase 0: architecture design only. Do not add application
-code, migrations, workers, or infrastructure before architecture approval.
+Milestone 1 is the user-authorized submission API, PostgreSQL persistence, and
+local PostgreSQL Compose setup (issue #3). No workers, Kafka, Debezium, Redis,
+or Kubernetes yet. Stop for review before starting subsequent milestones.
 Read `docs/architecture.md`, `docs/database-design.md`, and
-`docs/implementation-plan.md` before coding. Record approval at each milestone's
-review gate. Keep implementation packages
-under `internal/` and Go tests beside their packages in `*_test.go` files.
-Follow the implementation plan. Record important architectural decisions in
-`README.md` and update architecture documentation when designs change.
+`docs/implementation-plan.md` before coding. Record milestone approvals.
+Keep implementation under `internal/` and tests in `*_test.go` files beside code.
+Update README and architecture documentation when designs change.
 
 ## Go Style & Development Commands
-Prefer the standard library, small interfaces, and explicit dependency injection.
-Use Go formatting with tab indentation, `MixedCaps` identifiers, and short,
-lowercase package names. Propagate `context.Context` through I/O boundaries.
-Bound goroutines, queues, timeouts, and retries. Use `slog`, `errors.Is/As`, and
-meaningful error wrapping.
+Prefer standard library, small interfaces, and explicit injection. Use gofmt,
+`MixedCaps` identifiers, and lowercase packages. Propagate `context.Context`
+through I/O. Bound concurrency, timeouts, and retries. Use `slog` and wrapped
+errors with `errors.Is/As`.
 
 Once a Go module exists, run:
 
@@ -36,18 +34,20 @@ Once a Go module exists, run:
 - `go test ./...` for tests.
 - `go test -race ./...` to check for data races.
 
-No local service startup command is configured yet.
+Use `docker compose up -d --wait`, `go run ./cmd/migrate`, and `go run ./cmd/api`;
+see README for required environment settings. The API never runs migrations.
 
 ## Testing Guidelines
 Use Go's `testing` package and `TestXxx` function names. Test every critical state
 transition, duplicate delivery, retries, leases, and fencing. Use real PostgreSQL
 for concurrency integration tests. Document required services and configuration.
-No coverage threshold is configured. Never claim a test passed unless executed.
+Run `go test -tags=integration ./internal/storage/... -count=1` with
+`TEST_DATABASE_URL` targeting real PostgreSQL. Tests create isolated schemas and
+fail if infrastructure is absent. Never claim a test passed unless executed.
 
 ## Issues, Commits & Pull Requests
-Reference a GitHub issue for every implementation task. Work on a feature branch
-and one milestone at a time. History currently contains only `Initial commit`;
-use concise, imperative commit subjects describing the change.
+Use an issue-linked feature branch for each implementation milestone.
+Write imperative commit subjects, e.g. `feat: add submission API (refs #3)`.
 
 Open a PR linked to its issue, describing behavior, architectural decisions,
 validation commands, and results. Close an issue only after its acceptance
