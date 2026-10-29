@@ -108,6 +108,20 @@ runbook; dispatch tests must not mistake delivery for completion.
 
 ## Milestone 4 — bounded execution and fenced ownership
 
+Part 1 authorization: the user requested atomic claiming/renewal/fenced completion
+and confirmed M3 merged. Verified PR #10 merged into main `b5d2856` (contains M3
+`6af1f0d`); reviewed existing dispatcher, ledger, SQL/tests and design/failure
+documents. [Issue #11](https://github.com/su944/distributed-job-engine/issues/11)
+tracks Part 1 on `feat/milestone-4-atomic-ownership-11`, branched from that merged
+main. Scope: ownership repository operations and additive attempt history only.
+No worker pool, external handler, Kafka offset change, scheduler or recovery daemon.
+The provider-safe handler gate applies to later execution, which is not started.
+Verification: baseline plus real PostgreSQL storage/API ownership suites and M3
+CDC regression. [Part 1 record](milestone-4-part-1.md) documents actual results.
+Stop after Part 1 review; no push, merge or deployment is authorized.
+
+The following acceptance criteria describe the full M4 target, beyond Part 1.
+
 Dependencies: M3 accepted and provider-safe test handler approved.
 Acceptance: N slots cap execution; claims increment attempts/tokens atomically;
 heartbeats cannot revive expired leases; stale completion fails; all execution

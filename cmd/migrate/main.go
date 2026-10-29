@@ -32,6 +32,6 @@ func run() int {
 		logger.Error("migration failed; inspect database schema and migration checksums")
 		return 1
 	}
-	logger.Info("migrations applied", "version", 2)
+	logger.Info("migrations applied", "version", 3)
 	return 0
 }

@@ -7,7 +7,9 @@ Milestone 2 hardens this ledger/API in
 [issue #5](https://github.com/su944/distributed-job-engine/issues/5).
 Milestone 3 adds Debezium/Kafka CDC and durable Go notification dispatch under
 [issue #9](https://github.com/su944/distributed-job-engine/issues/9).
-Accepted jobs remain `READY`; no claiming, workers, Redis or Kubernetes exist.
+API submissions enter `READY`. M4 Part 1 adds internal claim/renew/complete
+repository operations; no worker invokes them or executes jobs automatically.
+No Redis or Kubernetes exists.
 See the [CDC setup and operations runbook](docs/cdc-runbook.md).
 
 ## Local setup
@@ -69,6 +71,20 @@ per-record I/O are bounded. `/health/ready` checks assignment, broker and DB;
 M4's handoff from receipts or a separate worker consumer group requires review.
 Versioned event semantics, compatibility pins, credentials, retention, restarts,
 rebalances and recovery are in [docs/cdc-runbook.md](docs/cdc-runbook.md).
+
+## Atomic ownership (Milestone 4 Part 1)
+
+M3 PR #10 is merged. User-authorized [issue #11](https://github.com/su944/distributed-job-engine/issues/11)
+adds namespace-scoped atomic claims, conditional renewal and fenced completion
+through small Go interfaces. Migration 003 adds attempt history; existing job
+schema, submission semantics and Kafka offsets are unchanged. Run the existing
+explicit `go run ./cmd/migrate` to apply it; the API never migrates automatically.
+No ownership HTTP endpoint, worker pool, retry scheduler or recovery daemon is
+introduced. Expired jobs stay RUNNING until separately reviewed recovery exists.
+
+See [ownership design and actual verification](docs/milestone-4-part-1.md) for
+locking, database time, completion outcomes, uncertain commits, Go/Java decisions
+and real PostgreSQL tests. Existing CDC dispatcher behavior remains unchanged.
 
 ## Run the REST API
 

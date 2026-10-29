@@ -60,6 +60,16 @@ scheduler repair produces another wake-up. Quarantine design is a review gate.
 
 ## Worker crash, lease expiry, and stale workers
 
+M4 Part 1's repository tests now verify competing independent database pools,
+old-token renewal/completion rejection, expiry during an observed row-lock wait,
+atomic rollback on history failure, and cancellation/lock/pool timeout release.
+Real protocol faults before COMMIT transmission and after the server commits
+verify claim/renew/complete report unknown outcomes without returning ownership
+permission or confirmed expiry. This is transport fault injection, not a process
+crash or failover test. The newer-attempt fixture simulates a future recovery
+transition; no recovery daemon or worker exists yet. See
+[actual Part 1 checks](milestone-4-part-1.md).
+
 Crash before claim commit leaves no owner. Crash after commit (including after
 Kafka acknowledgement) leaves RUNNING until expiry. Recovery closes the attempt,
 invalidates its token, and applies safe retry or reconciliation policy.

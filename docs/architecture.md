@@ -105,7 +105,20 @@ and assigned partitions. Local Compose is a pinned, single-node development
 stack, not a production HA deployment. See the [CDC runbook](cdc-runbook.md) for
 versions, credentials, replay, WAL retention and operational limits.
 
-### Future worker execution (M4+)
+### M4 Part 1: ownership repository only
+
+M3 PR #10 was merged at `b5d2856`; the user's merge confirmation clears the gate
+for [M4 Part 1, issue #11](https://github.com/su944/distributed-job-engine/issues/11).
+`jobs.JobClaimer`, `LeaseRenewer` and `JobCompleter` are narrow internal contracts
+implemented by the PostgreSQL repository. None is wired into Kafka or HTTP.
+They lock a namespace-scoped job row in a short READ COMMITTED transaction,
+then evaluate database wall-clock time and atomically update job/attempt history.
+No execution runs in a transaction. Completion supports success, permanent
+failure and unknown outcome requiring reconciliation. Retry policy and recovery,
+worker execution and Kafka handoff remain deferred. See
+[the Part 1 design and verification](milestone-4-part-1.md).
+
+### Future worker execution (later M4 parts)
 
 Reserve one of N worker slots before claiming. Pause assigned partitions when
 slots are full, continue required consumer polling, and bound fetch buffers.
