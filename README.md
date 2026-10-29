@@ -5,8 +5,10 @@ Milestone 1 implements durable submission and status reads, tracked in
 [issue #3](https://github.com/su944/distributed-job-engine/issues/3).
 Milestone 2 hardens this ledger/API in
 [issue #5](https://github.com/su944/distributed-job-engine/issues/5).
-Accepted jobs remain `READY`; no workers, Kafka, Debezium, Redis, or Kubernetes
-are implemented.
+Milestone 3 adds Debezium/Kafka CDC and durable Go notification dispatch under
+[issue #9](https://github.com/su944/distributed-job-engine/issues/9).
+Accepted jobs remain `READY`; no claiming, workers, Redis or Kubernetes exist.
+See the [CDC setup and operations runbook](docs/cdc-runbook.md).
 
 ## Local setup
 
@@ -28,12 +30,45 @@ The API listens on `127.0.0.1:8080`; PostgreSQL binds to loopback with a named
 volume. Existing volumes retain their original password; environment changes do
 not rotate credentials. `docker compose stop` preserves data. Avoid `down -v`
 unless intentionally deleting local jobs. The PostgreSQL 17 development tag
-receives patch updates; immutable production image pinning remains deferred.
+is now digest-pinned to the existing image; patch upgrades require explicit review.
 
 Migrations are explicit, transactional, advisory-locked, and checksum-verified.
 The API never migrates on startup. Re-running the migration command is safe;
 do not edit applied SQL. The down script is destructive and manual-only for
 disposable databases. No retention cleanup is implemented.
+
+## CDC and dispatcher (Milestone 3)
+
+For the bounded Part 2 review (CDC only), follow
+[the Part 2 verification procedure](docs/milestone-3-part-2.md). Existing
+dispatcher work is preserved separately; running it is not required for Part 2.
+
+```sh
+export CDC_PASSWORD='local-cdc-only-change-me'
+export KAFKA_BROKERS=127.0.0.1:19092
+export KAFKA_SOURCE=local-v1
+export CONNECT_URL=http://127.0.0.1:18083
+docker compose --profile cdc up -d --wait
+go run ./cmd/cdc-setup
+go run ./cmd/dispatcher
+```
+
+Use the DATABASE_URL/POSTGRES_PASSWORD from local setup. Export CDC_PASSWORD
+before creating Connect. cdc-setup explicitly applies migration 002, configures
+a separate replication login/INSERT-only publication and registers the router.
+The connector uses an environment secret reference. All infrastructure images
+are pinned by digest; Kafka/Connect run only in the optional cdc profile.
+Ports: Kafka 19092, Connect 18083, dispatcher health/metrics 8081 (all loopback).
+
+The dispatcher commits a receipt or bounded quarantine record in PostgreSQL
+before synchronously acknowledging Kafka. It does not claim, execute or complete
+jobs. Replays deduplicate event IDs; failures leave offsets uncommitted and stop
+the instance rather than accumulating retry buffers. Buffers, decompression and
+per-record I/O are bounded. `/health/ready` checks assignment, broker and DB;
+`/metrics` reports low-cardinality notification counters, not job completion.
+M4's handoff from receipts or a separate worker consumer group requires review.
+Versioned event semantics, compatibility pins, credentials, retention, restarts,
+rebalances and recovery are in [docs/cdc-runbook.md](docs/cdc-runbook.md).
 
 ## Run the REST API
 
@@ -133,6 +168,18 @@ against real SQL. Unit/httptest covers input, config, JSON responses, health,
 backpressure, and safe logs. Lifecycle tests bind localhost sockets and exercise
 request deadlines plus graceful and forced shutdown.
 
+For real CDC integration, follow the dedicated-stack runbook and export
+TEST_KAFKA_BROKERS/TEST_CONNECT_URL as well as TEST_DATABASE_URL:
+
+```sh
+go test -tags=integration ./internal/dispatch/... -count=1 -timeout=4m
+go test -race -tags=integration ./internal/dispatch/... -count=1 -timeout=4m
+```
+
+These tests publish through real PostgreSQL/Debezium/Kafka, restart the local
+connector, and exercise quarantine-before-ack and rebalance/shutdown replay.
+They fail on absent infrastructure and must not target shared production services.
+
 M2 adds concurrent HTTP races between equivalent and conflicting logical requests,
 frozen persisted-hash vectors, observed PostgreSQL lock-wait cancellation, pool
 exhaustion/recovery, SQLSTATE constraint assertions, and representative lookup
@@ -149,10 +196,12 @@ pool implementation are unchanged. Future scheduling indexes remain deferred.
 - `internal/jobs`: domain, validation/canonicalization, repository interface.
 - `internal/config`: environment; `internal/storage`: pgx/v5 through database/sql.
 - `internal/api`: HTTP; `internal/server`: deadlines/shutdown; `migrations`: SQL.
+- `internal/dispatch`: strict envelope validation, SQL receipts/quarantine and Kafka.
+- `cmd/dispatcher`: notification process; `cmd/cdc-setup`: explicit local admin setup.
 
 SQL uniquely enforces `(namespace, idempotency_key)`. A short READ COMMITTED
 transaction inserts job plus outbox together, with no check-then-insert race.
-CDC remains the planned relay. Kafka delivery will not imply completion;
+Debezium now relays committed outbox inserts. Kafka delivery does not imply completion;
 ownership will use PostgreSQL leases/fencing. Side effects remain at least once
 and require stable provider keys or explicit reconciliation.
 
@@ -169,6 +218,8 @@ are deferred. See:
 - [Go design choices compared with Spring Boot](docs/go-design-choices.md)
 - [Executed Milestone 1 verification](docs/milestone-1-verification.md)
 - [Milestone 2 review and verification](docs/milestone-2-verification.md)
+- [CDC runbook and version 1 event contract](docs/cdc-runbook.md)
+- [Milestone 3 verification](docs/milestone-3-verification.md)
 - [Contributor instructions](AGENTS.md)
 
 Use issue-linked feature branches and run relevant checks. A linked PR follows

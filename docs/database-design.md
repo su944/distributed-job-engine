@@ -85,6 +85,29 @@ retained rows and republish current READY jobs; duplicates are expected.
 
 ## Transaction boundaries and fencing
 
+### M3 receipt and quarantine transactions
+
+Migration 002 adds `dispatch_events`: UUID event primary key, job foreign key,
+version=1, timestamp, 32-byte canonical envelope hash, receipt timestamp. Same ID
+and hash is a duplicate; different hash is quarantined. No job columns are updated.
+The FK protects references and unknown job IDs are quarantined explicitly.
+
+`dispatch_quarantine` is keyed by source epoch, consumer group, topic, partition,
+offset. It stores a safe reason code, full key/value byte counts and SHA-256
+hashes, plus prefixes capped at 1 KiB/8 KiB. These bytes may be sensitive: restrict
+table access and never log them. Coordinate reuse with different bytes stops
+processing; cluster/topic recreation requires a new source epoch and deliberate
+replay. Quarantine persistence is idempotent across ambiguous database commits.
+
+Each notification transaction commits one receipt or quarantine before Kafka's
+offset+1 is committed. If persistence or its acknowledgement is uncertain, Kafka
+is not acknowledged and replay resolves the durable state. A later Kafka commit
+failure also replays safely. This is not an atomic PostgreSQL/Kafka transaction.
+Migration 001 and submission hashing/SQL remain unchanged. Down migrations, when
+explicitly approved for disposable databases, must run 002 before 001.
+
+### Existing submission transaction
+
 Implemented submission uses an explicit READ COMMITTED transaction and a SQL
 unique constraint. `ON CONFLICT DO NOTHING` waits for the winner; a separate
 SELECT sees that committed winner under a fresh statement snapshot. There is no

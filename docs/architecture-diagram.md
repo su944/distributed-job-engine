@@ -12,7 +12,9 @@ flowchart LR
     API --> Outbox[(Transactional outbox)]
     Outbox --> CDC[Debezium on Kafka Connect]
     CDC --> Kafka[Kafka jobs.ready.v1]
-    Kafka --> Worker[Bounded Go workers]
+    Kafka --> Dispatcher[Go notification dispatcher]
+    Dispatcher --> Receipts[(PostgreSQL receipts and quarantine)]
+    Kafka -. Future worker group .-> Worker[Future bounded Go workers]
     Worker --> PG
     Worker --> Provider[External service with stable effect key]
     Scheduler[Recovery scheduler] --> PG
@@ -58,21 +60,21 @@ sequenceDiagram
     participant D as PostgreSQL WAL
     participant C as Debezium
     participant K as Kafka
-    participant W as Worker dispatcher
+    participant W as Go dispatcher
     participant J as Jobs database
     D->>C: Committed outbox insert
     C->>K: JobReady keyed by job ID
     Note over C,K: Connector replay may duplicate records
     K->>W: Poll within bounded capacity
-    W->>J: Conditional claim transaction
-    alt Claim committed or DB confirms no-op
-        J-->>W: Dispatch handled
-        W->>K: Commit contiguous handled offsets
+    W->>J: Receipt or quarantine transaction
+    alt Durable outcome committed
+        J-->>W: Received, duplicate, or quarantined
+        W->>K: Commit handled record offset plus one
     else DB unavailable or commit uncertain
-        W->>W: Resolve or retry with bounded backoff
+        W->>W: Stop instance and replay on restart
         Note over W,K: Do not advance past unhandled offset
     end
-    Note over W,J: Kafka acknowledgement does not mean execution completed
+    Note over W,J: No claim, state transition, or execution in M3
 ```
 
 Malformed records follow durable quarantine before offset acknowledgement, as

@@ -31,8 +31,8 @@ READ COMMITTED SELECT reads the committed winner after a conflicting insert.
 Job and outbox share one short transaction; no network publishing happens inside.
 
 The explicit migration command is a small Flyway-like version/checksum ledger
-with an advisory lock. It currently supports only reviewed migration 1; future
-migrations must extend it. Startup does not change schema. Manual down SQL is
+with an advisory lock. M3 extends it to ordered migrations 1 and 2 while retaining
+the original checksum. Startup does not change schema. Manual down SQL is
 for disposable development databases, not a production rollback policy.
 
 ## Configuration, context, and errors
@@ -78,7 +78,8 @@ Go `testing` and `httptest` replace JUnit/MockMvc here; small stubs avoid a mock
 framework. Integration build tags explicitly require real PostgreSQL with random
 isolated schemas rather than an in-memory SQL substitute. `go test -race` detects
 Go shared-memory races; separate SQL concurrency tests prove cross-connection
-idempotency. Compose provides only PostgreSQL; dispatch infrastructure is deferred.
+idempotency. M1 used only PostgreSQL; M3 adds an optional, pinned Kafka/Connect
+profile and a separate notification dispatcher without introducing worker execution.
 
 Primary references: [pgx stdlib](https://pkg.go.dev/github.com/jackc/pgx/v5/stdlib)
 documents the adapter, and [PostgreSQL READ COMMITTED](https://www.postgresql.org/docs/current/transaction-iso.html#XACT-READ-COMMITTED)
