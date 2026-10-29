@@ -44,6 +44,16 @@ extra hot-row indexes until justified by measured queries.
 
 ## Attempt history
 
+M4 Part 1 implements `job_attempts` in additive migration 003, preserving 001/002
+and all existing job columns. It includes the identity, worker, start/deadline,
+end/outcome and safe error code below; provider references remain deferred.
+One partial unique index permits at most one active attempt per job. Claim
+increments job attempts/token and inserts history atomically; completion updates
+both job and history or rolls back both. Renewal changes only job lease expiry.
+The implemented outcomes are SUCCEEDED, PERMANENT and UNKNOWN. LEASE_EXPIRED and
+RETRYABLE are reserved history values for later reviewed work. No recovery or
+retry transition writes them in production yet.
+
 `job_attempts`: `job_id uuid REFERENCES jobs(id) ON DELETE RESTRICT`,
 `attempt_no integer`, `lease_token bigint`, `worker_id text`, `started_at`,
 `deadline_at`, nullable `ended_at`, `outcome`, `error_code`, and `provider_ref`.
@@ -135,10 +145,13 @@ editing applied SQL fails the checksum check. The API does not migrate on startu
 The down SQL is destructive and manual-only; no production rollback command is
 provided. No job or outbox cleanup is implemented, preserving idempotency keys.
 
-The remaining ownership transitions below are target behavior, not M1 code.
+M4 Part 1 implements claim, renewal and fenced success/permanent/unknown completion
+below. Recovery, retry scheduling, promotion, repair and operator reconciliation
+remain target behavior. See [Part 1 semantics and checks](milestone-4-part-1.md).
 
-Use short READ COMMITTED transactions, lock jobs before attempt rows, and retry
-bounded deadlock/serialization errors. Evaluate database time after acquiring the
+Use short READ COMMITTED transactions and lock jobs before attempt rows. M4 Part 1
+returns lock/deadlock/SQL errors to its caller without automatic transaction replay.
+Evaluate database time after acquiring the
 row lock (`clock_timestamp()`); transaction-start time is unsafe after lock waits.
 No handler/network side effect runs inside a database transaction.
 
