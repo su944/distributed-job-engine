@@ -7,8 +7,8 @@ Milestone 2 hardens this ledger/API in
 [issue #5](https://github.com/su944/distributed-job-engine/issues/5).
 Milestone 3 adds Debezium/Kafka CDC and durable Go notification dispatch under
 [issue #9](https://github.com/su944/distributed-job-engine/issues/9).
-API submissions enter `READY`. M4 Part 1 adds internal claim/renew/complete
-repository operations; no worker invokes them or executes jobs automatically.
+API submissions enter `READY`. M4 adds atomic ownership and an optional bounded
+Go worker that executes registered types from durable dispatch receipts.
 No Redis or Kubernetes exists.
 See the [CDC setup and operations runbook](docs/cdc-runbook.md).
 
@@ -79,12 +79,63 @@ adds namespace-scoped atomic claims, conditional renewal and fenced completion
 through small Go interfaces. Migration 003 adds attempt history; existing job
 schema, submission semantics and Kafka offsets are unchanged. Run the existing
 explicit `go run ./cmd/migrate` to apply it; the API never migrates automatically.
-No ownership HTTP endpoint, worker pool, retry scheduler or recovery daemon is
-introduced. Expired jobs stay RUNNING until separately reviewed recovery exists.
+No ownership HTTP endpoint is introduced. The bounded pool described below uses
+these primitives; expired jobs stay RUNNING until separately reviewed recovery exists.
 
 See [ownership design and actual verification](docs/milestone-4-part-1.md) for
 locking, database time, completion outcomes, uncertain commits, Go/Java decisions
 and real PostgreSQL tests. Existing CDC dispatcher behavior remains unchanged.
+
+## Bounded worker pool (Milestone 4)
+
+[Issue #12](https://github.com/su944/distributed-job-engine/issues/12) adds
+`cmd/worker` and `internal/worker`. Kafka is acknowledged only after the unchanged
+dispatcher stores a receipt/quarantine. Fixed worker slots drain eligible READY
+jobs with durable receipts using atomic claims; a restart cannot skip a READY job
+merely because its Kafka offset was already committed. No in-memory job queue is used.
+
+After local CDC setup, apply additive migration 004 and start the processes:
+
+```sh
+go run ./cmd/migrate
+# Terminal 1, same DATABASE_URL; demo.echo must be explicitly allowed by the API:
+JOB_TYPES=demo.echo go run ./cmd/api
+# Terminal 2, same DATABASE_URL and KAFKA_BROKERS:
+go run ./cmd/dispatcher
+# Terminal 3, same DATABASE_URL and JOB_NAMESPACE:
+WORKER_CAPACITY=4 go run ./cmd/worker
+```
+
+Submit `{"type":"demo.echo","payload":{"message":"hello"}}` with a fresh
+Idempotency-Key to POST /v1/jobs. The deterministic handler returns the stored
+payload as a private SQL result; GET reports SUCCEEDED with one attempt. The
+existing API allow-list default remains invoice.send, which has no handler and
+is deliberately left READY. Worker and API must use the same namespace.
+
+Worker health/metrics bind to `127.0.0.1:8082`. Registry setup is explicit in
+cmd/worker; only demo.echo is installed. Known-safe retryable outcomes enter
+RETRY_WAIT (or FAILED if exhausted); unknown/unsafe outcomes enter RECONCILE.
+There is no automatic retry promotion, expired-lease recovery or reconciliation.
+SIGTERM stops claims, renews/drains active work, then cancels at the drain deadline.
+An uncooperative handler cannot be killed as a Go goroutine: timeout is fatal and
+the command exits without releasing its lease. No real external calls are installed.
+
+Reproduce the full CLI pipeline on a disposable CDC stack:
+
+```sh
+python3 scripts/smoke-worker.py
+export TEST_DATABASE_URL="$DATABASE_URL"
+export TEST_KAFKA_BROKERS="$KAFKA_BROKERS"
+export TEST_CONNECT_URL=http://127.0.0.1:18083
+go test -race -tags=integration ./internal/worker/... ./internal/storage/... ./internal/api/... ./internal/dispatch/... -count=1 -timeout=4m
+```
+
+The smoke appends one job, builds the real commands, uses loopback ports
+18084–18086 and verifies the full CDC path plus clean SIGTERM exits. The tests
+use isolated SQL schemas and unique Kafka groups; child-process cases send
+SIGKILL/SIGTERM. Use dedicated local dependencies. Configuration, handoff trade-offs,
+SQL transitions, Go/Java comparison and actual evidence:
+[Milestone 4 worker record](docs/milestone-4-worker-pool.md).
 
 ## Run the REST API
 
@@ -214,6 +265,7 @@ pool implementation are unchanged. Future scheduling indexes remain deferred.
 - `internal/api`: HTTP; `internal/server`: deadlines/shutdown; `migrations`: SQL.
 - `internal/dispatch`: strict envelope validation, SQL receipts/quarantine and Kafka.
 - `cmd/dispatcher`: notification process; `cmd/cdc-setup`: explicit local admin setup.
+- `cmd/worker`: bounded execution process; `internal/worker`: registry, slots and renewal.
 
 SQL uniquely enforces `(namespace, idempotency_key)`. A short READ COMMITTED
 transaction inserts job plus outbox together, with no check-then-insert race.

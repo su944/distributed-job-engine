@@ -95,6 +95,23 @@ retained rows and republish current READY jobs; duplicates are expected.
 
 ## Transaction boundaries and fencing
 
+### M4 durable receipt drain
+
+Migration 004 adds dispatch_events(job_id) and a READY-only
+jobs(namespace,available_at,id) index for the inbox query. It changes no applied
+SQL or job columns. Fixed worker slots select at most one registered, due READY
+job with EXISTS(receipt), locking the job FOR UPDATE SKIP LOCKED. They reuse the
+Part 1 post-lock clock sample, guarded update and attempt insert. Receipt rows
+remain immutable: READY state means pending execution regardless of whether the
+Kafka offset was committed. Unknown types remain READY and are not claimed.
+
+Known-safe retryable completion adds history RETRYABLE and transitions to
+RETRY_WAIT when attempts remain, FAILED otherwise. No due-time algorithm or
+automatic promotion is added. Handler registration supplies trusted safety policy
+for this classified return; unknown outcomes always enter RECONCILE. Existing
+jobs.replay_safe defaults/frozen submission data are unchanged and do not imply
+future recovery safety. M5 must separately review that policy.
+
 ### M3 receipt and quarantine transactions
 
 Migration 002 adds `dispatch_events`: UUID event primary key, job foreign key,

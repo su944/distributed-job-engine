@@ -18,6 +18,9 @@ var dispatchSQL string
 //go:embed 003_ownership.up.sql
 var ownershipSQL string
 
+//go:embed 004_worker_inbox.up.sql
+var workerInboxSQL string
+
 // Apply serializes migration runners and detects edits to an already applied migration.
 func Apply(ctx context.Context, db *sql.DB) error {
 	tx, err := db.BeginTx(ctx, nil)
@@ -34,7 +37,7 @@ func Apply(ctx context.Context, db *sql.DB) error {
 	for _, migration := range []struct {
 		version int
 		sql     string
-	}{{1, submissionSQL}, {2, dispatchSQL}, {3, ownershipSQL}} {
+	}{{1, submissionSQL}, {2, dispatchSQL}, {3, ownershipSQL}, {4, workerInboxSQL}} {
 		want := fmt.Sprintf("%x", sha256.Sum256([]byte(migration.sql)))
 		var checksum string
 		err = tx.QueryRowContext(ctx, `SELECT checksum FROM schema_migrations WHERE version=$1`, migration.version).Scan(&checksum)

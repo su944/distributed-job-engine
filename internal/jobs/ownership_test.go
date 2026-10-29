@@ -32,6 +32,7 @@ func TestOwnershipInputBounds(t *testing.T) {
 		{Ownership: o, Outcome: CompletionSucceeded, Result: json.RawMessage(`{"receipt":"ok"}`)},
 		{Ownership: o, Outcome: CompletionPermanent, ErrorCode: "provider.rejected"},
 		{Ownership: o, Outcome: CompletionUnknown},
+		{Ownership: o, Outcome: CompletionRetryable},
 	} {
 		if !c.Valid() {
 			t.Fatalf("valid completion rejected: %+v", c)
@@ -39,7 +40,7 @@ func TestOwnershipInputBounds(t *testing.T) {
 	}
 	for _, c := range []Completion{
 		{Outcome: CompletionSucceeded},
-		{Ownership: o, Outcome: "RETRYABLE"},
+		{Ownership: o, Outcome: "INVALID"},
 		{Ownership: o, Outcome: CompletionSucceeded, ErrorCode: "failed"},
 		{Ownership: o, Outcome: CompletionSucceeded, Result: json.RawMessage(`null`)},
 		{Ownership: o, Outcome: CompletionSucceeded, Result: json.RawMessage(`[]`)},

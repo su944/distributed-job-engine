@@ -32,6 +32,7 @@ type ClaimRequest struct {
 
 type Claim struct {
 	Ownership
+	AcquiredAt     time.Time // database sample used for deadline/lease arithmetic
 	Attempt        int
 	Type           string
 	Payload        json.RawMessage
@@ -41,6 +42,18 @@ type Claim struct {
 
 type JobClaimer interface {
 	Claim(context.Context, ClaimRequest) (Claim, error)
+}
+
+// DispatchClaimRequest is trusted worker policy, not an API request.
+type DispatchClaimRequest struct {
+	Owner          string
+	Types          []string
+	LeaseDuration  time.Duration
+	AttemptTimeout time.Duration
+}
+
+type DispatchedClaimer interface {
+	ClaimDispatched(context.Context, DispatchClaimRequest) (Claim, error)
 }
 
 type LeaseRenewer interface {
@@ -53,6 +66,7 @@ const (
 	CompletionSucceeded CompletionOutcome = "SUCCEEDED"
 	CompletionPermanent CompletionOutcome = "PERMANENT"
 	CompletionUnknown   CompletionOutcome = "UNKNOWN"
+	CompletionRetryable CompletionOutcome = "RETRYABLE"
 )
 
 type Completion struct {
@@ -104,7 +118,7 @@ func (c Completion) Valid() bool {
 		}
 		var object map[string]json.RawMessage
 		return json.Unmarshal(c.Result, &object) == nil && object != nil
-	case CompletionPermanent, CompletionUnknown:
+	case CompletionPermanent, CompletionUnknown, CompletionRetryable:
 		return len(c.Result) == 0
 	default:
 		return false
