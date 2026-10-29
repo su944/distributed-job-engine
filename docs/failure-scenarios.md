@@ -31,6 +31,13 @@ failed; the uncertain-commit error classification always takes precedence.
 
 ## Debezium or Kafka outage
 
+M3 stops unacknowledged dispatch on persistence/commit/fatal-fetch errors; the
+client's bounded broker retries may wait while readiness fails. Restart the
+dispatcher after repairing dependencies. Durable receipts deduplicate event IDs;
+durable quarantine makes malformed records acknowledgeable. The current M3
+consumer does not execute or claim a job, and scheduler repair is not implemented.
+See [CDC operations](cdc-runbook.md) before attempting slot or offset recovery.
+
 Committed jobs remain READY. CDC resumes from durable offsets; replay is allowed.
 Monitor connector state, oldest READY age, Kafka lag, outbox growth, slot-retained
 WAL, and disk. Bound scheduler re-notification rates and reject new admissions

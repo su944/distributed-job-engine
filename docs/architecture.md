@@ -2,7 +2,8 @@
 
 Status: target design with the submission slice implemented in Milestone 1
 under the user's explicit revised scope ([issue #3](https://github.com/su944/distributed-job-engine/issues/3)).
-Workers, dispatch, and recovery remain proposals. See the
+M3 implements CDC and durable notification receipt; claims, workers, and recovery
+remain proposals. See the
 [diagrams](architecture-diagram.md), [database design](database-design.md),
 [failure analysis](failure-scenarios.md), and [plan](implementation-plan.md).
 
@@ -60,6 +61,51 @@ single configured namespace is trusted server configuration, never a client head
 Future attempt/audit tables and scheduler indexes are deferred until needed.
 
 ## Dispatch and bounded execution
+
+### Current M3 dispatch boundary
+
+The 2026-10-29 Part 2 request authorizes the PostgreSQL → Debezium → Kafka
+pipeline and its verification only. Existing uncommitted dispatcher work is
+preserved; Part 3 remains gated on review. The router now uses an explicit
+source-topic predicate so heartbeat records bypass it; event IDs are retained
+in the Kafka `id` header and the existing v1 payload. See
+[Part 2 procedure and evidence](milestone-3-part-2.md).
+
+The explicit M3 request authorizes this scope after the merged M2 implementation
+and successful revalidation. PR #8 remains an open documentation review; no earlier
+acceptance issue is closed. See [issue #9](https://github.com/su944/distributed-job-engine/issues/9).
+
+Kafka Connect/Debezium routes committed outbox INSERTs (and initial snapshot rows)
+to `jobs.ready.v1`, keyed by aggregateid. A separate `cmd/dispatcher` consumes in
+group `job-engine-dispatch-v1`. Before synchronous offset acknowledgement, it
+commits either an immutable `dispatch_events` receipt or `dispatch_quarantine`.
+It does not claim jobs, change status/attempts, or execute handlers. Receipts are
+durable notifications, not completion evidence. M4 must explicitly define the
+claim handoff from retained receipts or a separate worker consumer group; it
+cannot assume this group's already committed offsets represent runnable claims.
+
+This adds database writes per notification to make M3 acknowledgement durable.
+An in-memory log or Kafka-only acknowledgement would lose the notification's
+application outcome on a crash. PostgreSQL quarantine avoids coupling malformed
+record handling to a second Kafka topic's availability. Neither choice promises
+exactly-once delivery. Duplicate envelope IDs compare a canonical envelope hash;
+conflicting ID reuse is quarantined rather than replacing the original receipt.
+
+Processing is sequential: PollRecords(1), one concurrent 1 MiB fetch, a 2 MiB
+broker-read limit and 1 MiB decompression limit. Broker batches are capped at
+1 MiB; valid envelopes at 8 KiB. Each store call and offset commit has a 5-second
+deadline; rebalances are blocked only around this bounded record handling and
+released afterward. Storage/commit/fatal fetch failures stop the instance with
+no in-memory retry queue; restart replays safely. Offset-out-of-range stops
+consumption instead of silently skipping a retention gap.
+
+Health separates process liveness from assignment + database + broker readiness.
+Low-cardinality counters expose received, duplicate, quarantine, error outcomes
+and assigned partitions. Local Compose is a pinned, single-node development
+stack, not a production HA deployment. See the [CDC runbook](cdc-runbook.md) for
+versions, credentials, replay, WAL retention and operational limits.
+
+### Future worker execution (M4+)
 
 Reserve one of N worker slots before claiming. Pause assigned partitions when
 slots are full, continue required consumer polling, and bound fetch buffers.

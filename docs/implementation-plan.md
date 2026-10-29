@@ -83,6 +83,18 @@ transaction boundaries before CDC configuration.
 
 ## Milestone 3 — CDC and Kafka dispatch pipeline
 
+Part 2 authorization (2026-10-29): reuse existing branch and CDC bootstrap;
+verify Kafka/Connect, INSERT-only pgoutput and the Outbox Event Router through
+real HTTP submission, rollback and connector restart. Preserve existing work;
+do not extend Go consumers or begin Part 3 until review. Results and reproducible
+commands: [Part 2 verification](milestone-3-part-2.md).
+
+Current scope: [issue #9](https://github.com/su944/distributed-job-engine/issues/9).
+M2 implementation PR #6 is merged and its real SQL/race revalidation passed.
+The user's explicit M3 request clears bounded development; PR #8 remains open
+and no prior acceptance issue is implicitly closed. No claims/execution in M3.
+Review evidence and remaining limits are in `milestone-3-verification.md`.
+
 Dependencies: M2 accepted; approve justified local PostgreSQL/Kafka/Connect/
 Debezium configuration, supported versions, topic policy, Go client, quarantine,
 and offset management. Kafka/CDC infrastructure first becomes in scope here;

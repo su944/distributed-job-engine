@@ -12,9 +12,9 @@ PostgreSQL, Kafka, and Debezium.
 - Never hold database transactions during job execution.
 
 ## Project Structure
-Milestone 2 hardens the merged submission API and PostgreSQL ledger (issue #5).
-Keep fixes focused and preserve hash/migration compatibility. No workers, Kafka,
-Debezium, Redis, or Kubernetes yet. Stop for review before Milestone 3.
+Milestone 3 adds outbox CDC and durable notification dispatch (issue #9), after
+merged M2 and explicit user authorization. Preserve API/hash/migration compatibility.
+No job claims, workers, leases, retries, Redis, or Kubernetes. Stop before M4.
 Read `docs/architecture.md`, `docs/database-design.md`, and
 `docs/implementation-plan.md` before coding. Record milestone approvals.
 Keep implementation under `internal/` and tests in `*_test.go` files beside code.
@@ -26,7 +26,7 @@ Prefer standard library, small interfaces, and explicit injection. Use gofmt,
 through I/O. Bound concurrency, timeouts, and retries. Use `slog` and wrapped
 errors with `errors.Is/As`.
 
-Once a Go module exists, run:
+Run:
 
 - `gofmt -w .` to format Go source.
 - `go build ./...` to compile packages.
@@ -35,22 +35,23 @@ Once a Go module exists, run:
 - `go test -race ./...` to check for data races.
 
 Use `docker compose up -d --wait`, `go run ./cmd/migrate`, and `go run ./cmd/api`;
-see README for required environment settings. The API never runs migrations.
+see README and `docs/cdc-runbook.md` for the CDC profile and dispatcher.
+The API never runs migrations. Never acknowledge a Kafka record before durable
+receipt/quarantine; database failure must leave the offset uncommitted.
 
 ## Testing Guidelines
-Use Go's `testing` package and `TestXxx` function names. Test every critical state
-transition, duplicate delivery, retries, leases, and fencing. Use real PostgreSQL
-for concurrency integration tests. Document required services and configuration.
+Use `testing` and `TestXxx` names. Test critical transitions, replay and fencing.
+Use real PostgreSQL for concurrency tests; document service configuration.
 Run `go test -tags=integration ./internal/storage/... ./internal/api/... -count=1` with
 `TEST_DATABASE_URL` targeting real PostgreSQL. Tests create isolated schemas and
 fail if infrastructure is absent. Never claim a test passed unless executed.
 
 ## Issues, Commits & Pull Requests
 Use an issue-linked feature branch for each implementation milestone.
-Write imperative commit subjects, e.g. `feat: add submission API (refs #3)`.
+Write imperative commit subjects, e.g. `feat: add CDC dispatch (refs #9)`.
 
-Open a PR linked to its issue, describing behavior, architectural decisions,
-validation commands, and results. Close an issue only after its acceptance
+Open an issue-linked PR describing behavior, design, checks and results.
+Close an issue only after its acceptance
 criteria pass. Do not implement future milestones prematurely.
 
 ## Approval & Security Boundaries
