@@ -12,9 +12,11 @@ PostgreSQL, Kafka, and Debezium.
 - Never hold database transactions during job execution.
 
 ## Project Structure
-Milestone 3 adds outbox CDC and durable notification dispatch (issue #9), after
-merged M2 and explicit user authorization. Preserve API/hash/migration compatibility.
-No job claims, workers, leases, retries, Redis, or Kubernetes. Stop before M4.
+Milestone 4 adds atomic ownership and a bounded worker pool (issue #12), reusing
+the Part 1 ownership commit (issue #11) on merged M3. The user explicitly
+authorized this scope. Preserve API/hash/migration compatibility. Keep Kafka's
+durable receipt/quarantine-before-offset boundary. No retry scheduler, expired-lease
+recovery, external integrations, Redis or Kubernetes. Stop before Milestone 5.
 Read `docs/architecture.md`, `docs/database-design.md`, and
 `docs/implementation-plan.md` before coding. Record milestone approvals.
 Keep implementation under `internal/` and tests in `*_test.go` files beside code.

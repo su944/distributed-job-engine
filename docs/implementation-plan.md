@@ -108,6 +108,17 @@ runbook; dispatch tests must not mistake delivery for completion.
 
 ## Milestone 4 — bounded execution and fenced ownership
 
+Full M4 authorization: the user's next request explicitly covers ownership
+prerequisites plus bounded pool, handler registry, durable handoff, leases and
+shutdown, while excluding M5. Inspection found Part 1 commit `55e26b8` already
+present and pushed but not merged; origin/main remains accepted M3 `b5d2856`.
+Branch `feat/milestone-4-worker-pool` preserves/reuses that prerequisite rather
+than recreating it. [Issue #12](https://github.com/su944/distributed-job-engine/issues/12)
+tracks the expanded scope. Chosen handoff: SQL receipt inbox drain with SKIP LOCKED,
+not a Kafka execution queue or new consumer group. The following Part 1 record
+is historical; the current request authorizes continuation through full M4 only.
+See [current design and actual verification](milestone-4-worker-pool.md).
+
 Part 1 authorization: the user requested atomic claiming/renewal/fenced completion
 and confirmed M3 merged. Verified PR #10 merged into main `b5d2856` (contains M3
 `6af1f0d`); reviewed existing dispatcher, ledger, SQL/tests and design/failure

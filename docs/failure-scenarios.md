@@ -1,8 +1,8 @@
 # Failure scenarios and verification obligations
 
-Worker/dispatch scenarios remain proposed behavior and future tests. M1/M2
-submission checks have executed coverage recorded in the milestone verification
-documents. Each
+Submission, CDC/dispatch, atomic ownership and bounded worker checks now have
+executed coverage in their milestone verification documents. Recovery/scheduler
+and external-provider scenarios remain proposed behavior and future tests. Each
 critical transition requires real PostgreSQL concurrency coverage. See
 [transaction boundaries](database-design.md) for authoritative guards.
 
@@ -49,6 +49,15 @@ offset advancement. Backup restoration must reconcile DB and external outcomes.
 
 ## Duplicated, stale, malformed, or missing events
 
+Implemented M4 uses persisted receipts as a durable inbox, rather than passing
+Kafka records into execution channels. A receipt committed before claim is
+retained across crashes and found by replacement worker slots. Rebalances affect
+dispatcher membership, not database-owned handler contexts. Actual Kafka tests
+verify offset-after-receipt, replay and rebalance isolation. Child-process tests
+SIGKILL before claim (replacement executes) and after claim (RUNNING persists),
+and SIGTERM while a handler drains. See [M4 evidence](milestone-4-worker-pool.md).
+The direct Kafka-worker proposal below remains an alternative, not current code.
+
 Repeated notifications race on a conditional DB claim; only one current attempt
 owns the row. A notification for terminal/RUNNING/RETRY_WAIT is a no-op. DB errors
 are retried without committing past the affected Kafka offset. Test reordered
@@ -59,6 +68,12 @@ No notification can strand a READY job forever after dependencies recover:
 scheduler repair produces another wake-up. Quarantine design is a review gate.
 
 ## Worker crash, lease expiry, and stale workers
+
+M4 now installs a fixed-capacity worker with active renewal and conservative
+cancellation on renewal failure/uncertainty. Forced drain cancels the context
+without releasing ownership, even when an intentionally uncooperative handler
+continues. The command treats timeout as fatal and exits. RETRY_WAIT and expired
+RUNNING jobs are intentionally not promoted/recovered yet; M5 is still required.
 
 M4 Part 1's repository tests now verify competing independent database pools,
 old-token renewal/completion rejection, expiry during an observed row-lock wait,

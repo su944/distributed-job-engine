@@ -11,14 +11,15 @@ import (
 )
 
 var (
-	_ jobs.JobClaimer   = (*Repository)(nil)
-	_ jobs.LeaseRenewer = (*Repository)(nil)
-	_ jobs.JobCompleter = (*Repository)(nil)
+	_ jobs.JobClaimer        = (*Repository)(nil)
+	_ jobs.LeaseRenewer      = (*Repository)(nil)
+	_ jobs.JobCompleter      = (*Repository)(nil)
+	_ jobs.DispatchedClaimer = (*Repository)(nil)
 )
 
 // Ownership operations have a five-second total budget including pool waits.
 // Lock waits have a shorter server-side bound. All paths release the transaction.
-func (r *Repository) lockOwnership(ctx context.Context, id string) (*sql.Tx, error) {
+func (r *Repository) beginOwnership(ctx context.Context) (*sql.Tx, error) {
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return nil, fmt.Errorf("begin ownership: %w", err)
@@ -32,15 +33,25 @@ func (r *Repository) lockOwnership(ctx context.Context, id string) (*sql.Tx, err
 	if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '4s'`); err != nil {
 		return nil, fmt.Errorf("bound ownership waits: %w", err)
 	}
+	ok = true
+	return tx, nil
+}
+
+func (r *Repository) lockOwnership(ctx context.Context, id string) (*sql.Tx, error) {
+	tx, err := r.beginOwnership(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var found string
 	err = tx.QueryRowContext(ctx, `SELECT id::text FROM jobs WHERE namespace=$1 AND id=$2 FOR UPDATE`, r.namespace, id).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
+		tx.Rollback()
 		return nil, jobs.ErrNotFound
 	}
 	if err != nil {
+		tx.Rollback()
 		return nil, fmt.Errorf("lock ownership: %w", err)
 	}
-	ok = true
 	return tx, nil
 }
 
@@ -62,12 +73,16 @@ func (r *Repository) Claim(ctx context.Context, q jobs.ClaimRequest) (jobs.Claim
 		return jobs.Claim{}, err
 	}
 	defer tx.Rollback()
+	return r.claimLocked(ctx, tx, q)
+}
+
+func (r *Repository) claimLocked(ctx context.Context, tx *sql.Tx, q jobs.ClaimRequest) (jobs.Claim, error) {
 	var c jobs.Claim
 	var started time.Time
 	// This statement starts only AFTER the row lock was acquired. Materialize a
 	// single wall-clock sample; transaction/statement-start time before waiting
 	// for a lock could grant a lease that has already expired.
-	err = tx.QueryRowContext(ctx, `WITH t AS MATERIALIZED (SELECT clock_timestamp() AS now)
+	err := tx.QueryRowContext(ctx, `WITH t AS MATERIALIZED (SELECT clock_timestamp() AS now)
         UPDATE jobs SET status='RUNNING', attempt_count=attempt_count+1, lease_token=lease_token+1,
             lease_owner=$3, lease_expires_at=t.now+LEAST($4::bigint,$5::bigint)*interval '1 microsecond',
             attempt_deadline=t.now+$5::bigint*interval '1 microsecond', updated_at=t.now
@@ -92,6 +107,7 @@ func (r *Repository) Claim(ctx context.Context, q jobs.ClaimRequest) (jobs.Claim
 	}
 	c.LeaseExpiresAt = c.LeaseExpiresAt.UTC()
 	c.Deadline = c.Deadline.UTC()
+	c.AcquiredAt = started.UTC()
 	return c, nil
 }
 
@@ -137,6 +153,8 @@ func (r *Repository) Complete(ctx context.Context, q jobs.Completion) error {
 		status = jobs.Failed
 	case jobs.CompletionUnknown:
 		status = jobs.Reconcile
+	case jobs.CompletionRetryable:
+		status = jobs.RetryWait
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -155,8 +173,9 @@ func (r *Repository) Complete(ctx context.Context, q jobs.Completion) error {
 	var ended time.Time
 	var attempt int
 	err = tx.QueryRowContext(ctx, `WITH t AS MATERIALIZED (SELECT clock_timestamp() AS now)
-        UPDATE jobs SET status=$5, result=$6, last_error_code=NULLIF($7,''),
-            finished_at=CASE WHEN $5 IN ('SUCCEEDED','FAILED') THEN t.now ELSE NULL END,
+        UPDATE jobs SET status=CASE WHEN $5='RETRY_WAIT' AND attempt_count>=max_attempts THEN 'FAILED' ELSE $5 END,
+            result=$6, last_error_code=NULLIF($7,''),
+            finished_at=CASE WHEN $5 IN ('SUCCEEDED','FAILED') OR ($5='RETRY_WAIT' AND attempt_count>=max_attempts) THEN t.now ELSE NULL END,
             lease_owner=NULL,lease_expires_at=NULL,attempt_deadline=NULL,updated_at=t.now
         FROM t WHERE namespace=$1 AND id=$2 AND status='RUNNING' AND lease_owner=$3 AND lease_token=$4
             AND lease_expires_at>t.now AND attempt_deadline>t.now

@@ -2,8 +2,8 @@
 
 Status: target design with the submission slice implemented in Milestone 1
 under the user's explicit revised scope ([issue #3](https://github.com/su944/distributed-job-engine/issues/3)).
-M3 implements CDC and durable notification receipt; claims, workers, and recovery
-remain proposals. See the
+M3 implements CDC and durable notification receipt. M4 adds atomic ownership and
+bounded registered-handler execution; retry scheduling and recovery remain proposals. See the
 [diagrams](architecture-diagram.md), [database design](database-design.md),
 [failure analysis](failure-scenarios.md), and [plan](implementation-plan.md).
 
@@ -118,7 +118,30 @@ failure and unknown outcome requiring reconciliation. Retry policy and recovery,
 worker execution and Kafka handoff remain deferred. See
 [the Part 1 design and verification](milestone-4-part-1.md).
 
-### Future worker execution (later M4 parts)
+### Implemented M4 durable handoff and bounded execution
+
+The user authorized full M4 under [issue #12](https://github.com/su944/distributed-job-engine/issues/12),
+including reuse of Part 1 commit `55e26b8` if available. The new branch preserves
+that prerequisite on merged M3. The chosen handoff uses `dispatch_events` as a
+durable inbox: each idle execution slot selects one registered, due READY job
+with a receipt using FOR UPDATE SKIP LOCKED, then invokes the shared atomic claim
+and history insert. Receipt rows have no consumed flag; job state is authoritative.
+Kafka polling, offset commits and rebalance code remain unchanged in the dispatcher.
+
+This adds bounded SQL polling/indexes in exchange for avoiding another Kafka
+consumer group or a volatile handoff. A receipt committed before a process crash
+remains claimable after restart even when Kafka already acknowledged the record.
+Duplicate receipts cannot claim RUNNING/terminal jobs. An abandoned RUNNING job
+still requires M5 recovery; this does not provide eventual execution after every
+crash until recovery exists. Fixed goroutines reserve capacity before claiming;
+handlers run outside transactions with renewal on a separate bounded DB pool.
+Only the side-effect-free demo.echo handler is installed. See
+[design, limits and actual checks](milestone-4-worker-pool.md).
+
+### Future Kafka-worker handoff alternative (not implemented)
+
+The paragraphs below describe the earlier direct Kafka-worker proposal. M4 uses
+the durable inbox drain above instead; no worker Kafka offsets are introduced.
 
 Reserve one of N worker slots before claiming. Pause assigned partitions when
 slots are full, continue required consumer polling, and bound fetch buffers.
